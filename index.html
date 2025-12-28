@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>recovery-dbatest 和 aws-luckyus-pgilkmap-rw 闲置实例分析报告</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(180deg, #f0f7ff 0%, #e8f4ff 50%, #f0f7ff 100%);
+            min-height: 100vh;
+            padding: 32px 40px;
+            color: #1a1a2e;
+        }
+        .mono { font-family: 'Courier New', monospace; }
+        .card { background: #fff; border-radius: 16px; padding: 24px; border: 1px solid #cce5ff; box-shadow: 0 2px 8px rgba(0,102,204,0.08); margin-bottom: 24px; }
+        .grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 24px; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        .metric-card { background: #fff; border-radius: 16px; padding: 24px; border: 1px solid #cce5ff; box-shadow: 0 2px 8px rgba(0,102,204,0.08); }
+        .metric-label { color: #5c6b7a; font-size: 12px; font-weight: 600; text-transform: uppercase; margin-bottom: 8px; }
+        .metric-value { font-size: 28px; font-weight: 700; font-family: 'Courier New', monospace; }
+        .metric-sub { font-size: 13px; margin-top: 8px; font-weight: 500; }
+        .blue { color: #0066cc; }
+        .green { color: #00a86b; }
+        .orange { color: #f5a623; }
+        .red { color: #e74c3c; }
+        .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+        .badge-green { background: rgba(0,168,107,0.15); color: #00a86b; }
+        .badge-orange { background: rgba(245,166,35,0.15); color: #b8860b; }
+        .badge-blue { background: rgba(0,102,204,0.15); color: #0066cc; }
+        .badge-red { background: rgba(231,76,60,0.15); color: #e74c3c; }
+        .tabs { display: flex; gap: 8px; background: #fff; padding: 6px; border-radius: 12px; width: fit-content; border: 1px solid #cce5ff; margin-bottom: 28px; }
+        .tab { padding: 10px 18px; border: none; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; background: transparent; color: #5c6b7a; }
+        .tab.active { background: #0066cc; color: #fff; }
+        .tab:hover:not(.active) { background: #e6f2ff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .summary-blue { background: #e6f2ff; border-radius: 12px; padding: 20px; border-left: 4px solid #0066cc; }
+        .summary-yellow { background: #fff8e6; border-radius: 12px; padding: 20px; border-left: 4px solid #f5a623; }
+        .action-box-red { background: #fef2f2; padding: 12px; border-radius: 8px; display: flex; align-items: center; gap: 10px; }
+        .action-box-yellow { background: #fff3cd; padding: 12px; border-radius: 8px; display: flex; align-items: center; gap: 10px; }
+        .insight-orange { background: #fff7ed; padding: 10px 14px; border-radius: 8px; border-left: 3px solid #f5a623; margin-top: 12px; }
+        .insight-red { background: #fef2f2; padding: 10px 14px; border-radius: 8px; border-left: 3px solid #e74c3c; margin-top: 16px; }
+        .insight-yellow { background: #fff8e6; padding: 10px 14px; border-radius: 8px; border-left: 3px solid #f5a623; margin-top: 16px; }
+        .bar-chart { display: flex; flex-direction: column; gap: 12px; }
+        .bar-row { display: flex; align-items: center; gap: 12px; }
+        .bar-label { width: 140px; font-size: 12px; color: #5c6b7a; }
+        .bar-track { flex: 1; height: 24px; background: #e6f2ff; border-radius: 4px; overflow: hidden; }
+        .bar-fill { height: 100%; border-radius: 4px; }
+        .bar-value { width: 70px; text-align: right; font-size: 12px; font-family: 'Courier New', monospace; }
+        .legend { display: flex; justify-content: space-between; padding: 12px; background: #e6f2ff; border-radius: 8px; margin-top: 16px; }
+        .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #5c6b7a; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+        .conn-chart { display: flex; align-items: end; gap: 4px; height: 150px; padding: 0 10px; }
+        .conn-bar { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+        .conn-fill { width: 100%; border-radius: 2px; }
+        .conn-label { font-size: 9px; color: #5c6b7a; }
+        .timeline { position: relative; padding: 0 20px; }
+        .timeline-line { position: absolute; top: 7px; left: 20px; right: 20px; height: 2px; background: #cce5ff; }
+        .timeline-items { display: flex; justify-content: space-between; position: relative; }
+        .timeline-item { display: flex; flex-direction: column; align-items: center; flex: 1; }
+        .timeline-dot { width: 14px; height: 14px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 2px #cce5ff; margin-bottom: 8px; }
+        .timeline-date { font-size: 10px; color: #5c6b7a; font-family: 'Courier New', monospace; margin-bottom: 4px; }
+        .timeline-text { font-size: 10px; text-align: center; max-width: 80px; line-height: 1.3; }
+        .instance-btns { display: flex; gap: 12px; margin-bottom: 24px; }
+        .instance-btn { flex: 1; background: #fff; border: 2px solid #cce5ff; border-radius: 12px; padding: 16px 20px; cursor: pointer; display: flex; align-items: center; gap: 12px; }
+        .instance-btn.active { background: #e6f2ff; border-color: #0066cc; }
+        .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .config-item { background: #e6f2ff; padding: 12px 16px; border-radius: 8px; }
+        .config-label { font-size: 11px; color: #5c6b7a; text-transform: uppercase; margin-bottom: 4px; }
+        .config-value { font-size: 13px; }
+        .tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+        .tag { background: #e6f2ff; padding: 4px 10px; border-radius: 6px; font-size: 12px; color: #0066cc; font-family: 'Courier New', monospace; }
+        .side-cards { display: flex; flex-direction: column; gap: 16px; }
+        .side-card { background: #fff; border-radius: 16px; padding: 24px; border: 1px solid #cce5ff; }
+        .side-card-green { background: #e6f7ef; border-radius: 16px; padding: 24px; border: 1px solid #b3e6cc; }
+        .side-card-yellow { background: #fff8e6; border-radius: 16px; padding: 24px; border: 1px solid #ffe6a3; }
+        .side-label { font-size: 14px; color: #5c6b7a; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; padding: 12px 16px; font-size: 11px; font-weight: 600; color: #5c6b7a; text-transform: uppercase; border-bottom: 2px solid #cce5ff; }
+        td { padding: 14px 16px; border-bottom: 1px solid #e6f2ff; font-size: 13px; }
+        .data-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e6f2ff; }
+        .data-label { color: #5c6b7a; font-size: 13px; }
+        .data-value { font-weight: 600; }
+        .dep-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: #e6f2ff; border-radius: 8px; margin-bottom: 12px; }
+        .dep-content { flex: 1; }
+        .dep-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+        .dep-detail { font-size: 12px; color: #5c6b7a; }
+        .risk-card { padding: 16px; background: #e6f2ff; border-radius: 8px; }
+        .risk-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+        .risk-dot { width: 12px; height: 12px; border-radius: 2px; }
+        .risk-text { font-size: 13px; color: #5c6b7a; line-height: 1.6; }
+        .action-card { border-radius: 16px; padding: 24px; background: #fff; }
+        .action-card-blue { border: 2px solid #cce5ff; }
+        .action-card-yellow { border: 2px solid #ffe6a3; }
+        .action-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+        .action-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+        .action-subtitle { font-size: 13px; color: #5c6b7a; }
+        .action-badge { padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; }
+        .action-badge-red { background: #fef2f2; color: #e74c3c; }
+        .action-badge-yellow { background: #fff3cd; color: #856404; }
+        .rationale { margin-bottom: 20px; padding: 16px; background: #e6f2ff; border-radius: 8px; }
+        .rationale-title { font-size: 12px; color: #5c6b7a; text-transform: uppercase; margin-bottom: 8px; }
+        .rationale ul { margin: 0; padding-left: 16px; font-size: 13px; line-height: 1.8; }
+        .checklist-title { font-size: 12px; color: #5c6b7a; text-transform: uppercase; margin-bottom: 12px; }
+        .checklist-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; }
+        .checklist-done { background: #e6f7ef; }
+        .checklist-pending { background: #e6f2ff; }
+        .check-icon { width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+        .check-done { background: #00a86b; color: #fff; }
+        .check-pending { background: #d1d5db; color: #fff; }
+        .checklist-text { flex: 1; }
+        .checklist-main { font-size: 13px; }
+        .checklist-sub { font-size: 11px; color: #5c6b7a; }
+        .savings-box { margin-top: 20px; padding: 16px; background: #e6f7ef; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .savings-label { color: #00a86b; font-weight: 600; font-size: 14px; }
+        .savings-note { font-size: 11px; color: #5c6b7a; margin-top: 4px; }
+        .savings-value { color: #00a86b; font-weight: 700; font-size: 24px; font-family: 'Courier New', monospace; }
+        .stakeholder { background: #e6f2ff; padding: 16px; border-radius: 8px; }
+        .stakeholder-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+        .stakeholder-role { font-size: 12px; color: #5c6b7a; margin-bottom: 8px; }
+        .stakeholder-footer { display: flex; justify-content: space-between; align-items: center; }
+        .stakeholder-action { font-size: 12px; color: #0066cc; }
+        .stakeholder-badge { padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+        .stakeholder-required { background: #fff3cd; color: #856404; }
+        .stakeholder-execute { background: #e6f2ff; color: #0066cc; }
+        .final-banner { background: linear-gradient(135deg, #0066cc 0%, #004c99 100%); border-radius: 16px; padding: 28px 32px; display: flex; justify-content: space-between; align-items: center; color: #fff; }
+        .final-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+        .final-subtitle { font-size: 14px; opacity: 0.9; }
+        .final-label { font-size: 14px; opacity: 0.8; text-align: right; }
+        .final-value { font-size: 36px; font-weight: 700; font-family: 'Courier New', monospace; margin-top: 4px; }
+        h3 { font-size: 16px; font-weight: 600; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+        .icon { display: inline-block; width: 18px; height: 18px; text-align: center; }
+    </style>
+</head>
+<body>
+    <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 32px; color: #0066cc;">
+        recovery-dbatest 和 aws-luckyus-pgilkmap-rw 闲置实例分析报告
+    </h1>
+
+    <div class="tabs">
+        <button class="tab active" onclick="showTab('overview')">📊 执行摘要</button>
+        <button class="tab" onclick="showTab('instances')">🖥️ 实例详情</button>
+        <button class="tab" onclick="showTab('data')">💾 数据库内容</button>
+        <button class="tab" onclick="showTab('dependencies')">🔗 依赖与风险</button>
+        <button class="tab" onclick="showTab('actions')">✅ 行动计划</button>
+    </div>
+
+    <!-- Overview Tab -->
+    <div id="tab-overview" class="tab-content active">
+        <div class="grid-5">
+            <div class="metric-card">
+                <div class="metric-label">闲置实例</div>
+                <div class="metric-value">2</div>
+                <div class="metric-sub blue">共64个（3.1%）</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">最长闲置天数</div>
+                <div class="metric-value">14+</div>
+                <div class="metric-sub orange">无连接</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">涉及数据</div>
+                <div class="metric-value">9.2 GB</div>
+                <div class="metric-sub blue">两个实例合计</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">月度节省</div>
+                <div class="metric-value">$303</div>
+                <div class="metric-sub green">成本降低99%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">年度影响</div>
+                <div class="metric-value">$3.6K</div>
+                <div class="metric-sub orange">如立即执行</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>📋 执行摘要</h3>
+            <div class="grid-2">
+                <div class="summary-blue">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+                        <strong style="font-size: 15px;">recovery-dbatest</strong>
+                        <span class="badge badge-green">✓ 低风险</span>
+                    </div>
+                    <p style="color: #5c6b7a; font-size: 13px; line-height: 1.6; margin-bottom: 12px;">
+                        <strong style="color: #1a1a2e;">实例说明：</strong>该实例是2025年6月5日创建的时间点恢复实例，包含来自生产监控系统的DBA监控数据（进程列表、事务、锁）。
+                    </p>
+                    <p style="color: #5c6b7a; font-size: 13px; line-height: 1.6; margin-bottom: 12px;">
+                        <strong style="color: #1a1a2e;">闲置原因：</strong>这是一次性恢复操作后未清理的实例。数据已过期7个月（最后更新：2025年5月28日）。当前生产实例 <code style="background: #cce5ff; padding: 2px 6px; border-radius: 4px; font-size: 12px;">aws-luckyus-dbatest-rw</code> 已存在。
+                    </p>
+                    <div class="action-box-red">
+                        <span>🗑️</span>
+                        <span style="font-size: 13px; color: #e74c3c; font-weight: 600;">建议：快照后删除 — 月省 $48.96</span>
+                    </div>
+                </div>
+                <div class="summary-yellow">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+                        <strong style="font-size: 15px;">aws-luckyus-pgilkmap-rw</strong>
+                        <span class="badge badge-orange">⚠ 中风险</span>
+                    </div>
+                    <p style="color: #5c6b7a; font-size: 13px; line-height: 1.6; margin-bottom: 12px;">
+                        <strong style="color: #1a1a2e;">实例说明：</strong>内部位置映射服务（ilkmap）的PostgreSQL数据库。在 <code style="background: #cce5ff; padding: 2px 6px; border-radius: 4px; font-size: 12px;">luckyus_ilkmap</code> 数据库中包含115MB的映射/地理数据。
+                    </p>
+                    <p style="color: #5c6b7a; font-size: 13px; line-height: 1.6; margin-bottom: 12px;">
+                        <strong style="color: #1a1a2e;">需谨慎原因：</strong>删除保护已有意启用。相关Redis缓存（<code style="background: #cce5ff; padding: 2px 6px; border-radius: 4px; font-size: 12px;">luckyus-lkmap</code>）存在但为空。需要服务负责人确认。
+                    </p>
+                    <div class="action-box-yellow">
+                        <span>⏸️</span>
+                        <span style="font-size: 13px; color: #856404; font-weight: 600;">建议：停止实例 — 月省 $254.02</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-2">
+            <div class="card">
+                <h3>💰 月度成本明细</h3>
+                <div class="bar-chart">
+                    <div class="bar-row">
+                        <span class="bar-label">计算 (db.t3.small)</span>
+                        <div class="bar-track"><div class="bar-fill" style="width: 15%; background: #0066cc;"></div></div>
+                        <span class="bar-value">$24.48</span>
+                    </div>
+                    <div class="bar-row">
+                        <span class="bar-label">计算 (db.m5.large)</span>
+                        <div class="bar-track"><div class="bar-fill" style="width: 80%; background: #004c99;"></div></div>
+                        <span class="bar-value">$128.16</span>
+                    </div>
+                    <div class="bar-row">
+                        <span class="bar-label">Multi-AZ 备用</span>
+                        <div class="bar-track"><div class="bar-fill" style="width: 95%; background: linear-gradient(to right, #0066cc 16%, #004c99 16%);"></div></div>
+                        <span class="bar-value">$152.64</span>
+                    </div>
+                    <div class="bar-row">
+                        <span class="bar-label">存储 (gp2/gp3)</span>
+                        <div class="bar-track"><div class="bar-fill" style="width: 4%; background: #0066cc;"></div></div>
+                        <span class="bar-value">$6.90</span>
+                    </div>
+                </div>
+                <div class="legend">
+                    <div class="legend-item"><div class="legend-dot" style="background: #0066cc;"></div> recovery-dbatest: $48.96</div>
+                    <div class="legend-item"><div class="legend-dot" style="background: #004c99;"></div> pgilkmap-rw: $256.32</div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>📈 60天连接历史</h3>
+                <div class="conn-chart">
+                    <div class="conn-bar"><div class="conn-fill" style="height: 2px; background: #e6f2ff;"></div><span class="conn-label">10/28</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 2px; background: #e6f2ff;"></div><span class="conn-label">11/3</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 2px; background: #e6f2ff;"></div><span class="conn-label">11/10</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 8px; background: #004c99;"></div><span class="conn-label">11/17</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 2px; background: #e6f2ff;"></div><span class="conn-label">11/24</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 2px; background: #e6f2ff;"></div><span class="conn-label">12/1</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 120px; background: #0066cc;"></div><span class="conn-label">12/4</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 2px; background: #e6f2ff;"></div><span class="conn-label">12/8</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 2px; background: #e6f2ff;"></div><span class="conn-label">12/15</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 6px; background: #0066cc;"></div><span class="conn-label">12/17</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 2px; background: #e6f2ff;"></div><span class="conn-label">12/22</span></div>
+                    <div class="conn-bar"><div class="conn-fill" style="height: 2px; background: #e6f2ff;"></div><span class="conn-label">12/27</span></div>
+                </div>
+                <div class="insight-orange">
+                    <strong>关键洞察：</strong>60天内仅3天有连接。12月4日的峰值（480次连接）可能是健康检查或调查——并非实际使用。
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>📅 实例生命周期时间线</h3>
+            <div class="timeline">
+                <div class="timeline-line"></div>
+                <div class="timeline-items">
+                    <div class="timeline-item">
+                        <div class="timeline-dot" style="background: #004c99;"></div>
+                        <div class="timeline-date">03-05</div>
+                        <div class="timeline-text">pgilkmap-rw 创建</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot" style="background: #0066cc;"></div>
+                        <div class="timeline-date">05-28</div>
+                        <div class="timeline-text">dbatest最后数据更新</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot" style="background: #0066cc;"></div>
+                        <div class="timeline-date">06-05</div>
+                        <div class="timeline-text">recovery-dbatest 创建</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot" style="background: #004c99;"></div>
+                        <div class="timeline-date">11-17</div>
+                        <div class="timeline-text">pgilkmap最后连接</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot" style="background: #0066cc;"></div>
+                        <div class="timeline-date">12-04</div>
+                        <div class="timeline-text">dbatest 480次连接</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot" style="background: #0066cc;"></div>
+                        <div class="timeline-date">12-17</div>
+                        <div class="timeline-text">dbatest单次连接</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot" style="background: #00a86b;"></div>
+                        <div class="timeline-date">12-27</div>
+                        <div class="timeline-text">当前分析日期</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Instances Tab -->
+    <div id="tab-instances" class="tab-content">
+        <div class="instance-btns">
+            <button class="instance-btn active" id="btn-dbatest" onclick="selectInstance('dbatest')">
+                🖥️ <div><strong>recovery-dbatest</strong><br><span style="color: #5c6b7a; font-size: 12px;">MySQL 8.0.40</span></div>
+            </button>
+            <button class="instance-btn" id="btn-pgilkmap" onclick="selectInstance('pgilkmap')">
+                🖥️ <div><strong>aws-luckyus-pgilkmap-rw</strong><br><span style="color: #5c6b7a; font-size: 12px;">PostgreSQL 17.4</span></div>
+            </button>
+        </div>
+
+        <div id="instance-dbatest">
+            <div class="grid-2">
+                <div class="card">
+                    <h3 class="blue">⚙️ 实例配置</h3>
+                    <div class="config-grid">
+                        <div class="config-item"><div class="config-label">引擎</div><div class="config-value">MySQL 8.0.40</div></div>
+                        <div class="config-item"><div class="config-label">实例类型</div><div class="config-value">db.t3.small</div></div>
+                        <div class="config-item"><div class="config-label">存储</div><div class="config-value">40 GB (gp2)</div></div>
+                        <div class="config-item"><div class="config-label">Multi-AZ</div><div class="config-value">是（备用）</div></div>
+                        <div class="config-item"><div class="config-label">创建日期</div><div class="config-value">2025-06-05</div></div>
+                        <div class="config-item"><div class="config-label">参数组</div><div class="config-value">luckyus-prod</div></div>
+                        <div class="config-item"><div class="config-label">VPC</div><div class="config-value mono" style="font-size: 12px;">vpc-0dce7ca777...</div></div>
+                        <div class="config-item"><div class="config-label">删除保护</div><div class="config-value">已禁用</div></div>
+                    </div>
+                    <div class="tags">
+                        <span class="tag">envtype: prod</span>
+                        <span class="tag">bg_type: lucky</span>
+                    </div>
+                </div>
+                <div class="side-cards">
+                    <div class="side-card"><div class="side-label">用途</div><div>DBA监控数据的时间点恢复实例</div></div>
+                    <div class="side-card"><div class="side-label">数据状态</div><div class="red" style="font-weight: 600;">数据过期（最后更新：2025年5月）</div></div>
+                    <div class="side-card"><div class="side-label">月度成本</div><div class="mono red" style="font-size: 28px; font-weight: 700;">$48.96</div></div>
+                    <div class="side-card-green"><div class="side-label">风险等级</div><span class="badge badge-green">✓ 低</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="instance-pgilkmap" style="display: none;">
+            <div class="grid-2">
+                <div class="card">
+                    <h3 class="blue">⚙️ 实例配置</h3>
+                    <div class="config-grid">
+                        <div class="config-item"><div class="config-label">引擎</div><div class="config-value">PostgreSQL 17.4</div></div>
+                        <div class="config-item"><div class="config-label">实例类型</div><div class="config-value">db.m5.large</div></div>
+                        <div class="config-item"><div class="config-label">存储</div><div class="config-value">20 GB (gp3, 3000 IOPS)</div></div>
+                        <div class="config-item"><div class="config-label">Multi-AZ</div><div class="config-value">是（备用）</div></div>
+                        <div class="config-item"><div class="config-label">创建日期</div><div class="config-value">2025-03-05</div></div>
+                        <div class="config-item"><div class="config-label">参数组</div><div class="config-value">default.postgres17</div></div>
+                        <div class="config-item"><div class="config-label">VPC</div><div class="config-value mono" style="font-size: 12px;">vpc-0dce7ca777...</div></div>
+                        <div class="config-item"><div class="config-label">删除保护</div><div class="config-value">已启用</div></div>
+                    </div>
+                    <div class="tags">
+                        <span class="tag">devops-guru-default: luckyus-pgilkmap-rw</span>
+                    </div>
+                </div>
+                <div class="side-cards">
+                    <div class="side-card"><div class="side-label">用途</div><div>PostgreSQL地理位置映射数据库</div></div>
+                    <div class="side-card"><div class="side-label">数据状态</div><div class="orange" style="font-weight: 600;">包含115MB活跃数据</div></div>
+                    <div class="side-card"><div class="side-label">月度成本</div><div class="mono red" style="font-size: 28px; font-weight: 700;">$256.32</div></div>
+                    <div class="side-card-yellow"><div class="side-label">风险等级</div><span class="badge badge-orange">⚠ 中</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Tab -->
+    <div id="tab-data" class="tab-content">
+        <div class="card">
+            <h3>💾 数据库Schema分析</h3>
+            <table>
+                <thead>
+                    <tr><th>实例</th><th>Schema/数据库</th><th>表数量</th><th>大小</th><th>描述</th><th>最后更新</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><span class="badge badge-blue">dbatest</span></td><td class="mono">luckyus_db_collection</td><td>27</td><td class="mono orange">8.8 GB</td><td style="color: #5c6b7a;">DBA监控数据</td><td class="mono red">2025-05-28</td></tr>
+                    <tr><td><span class="badge badge-blue">dbatest</span></td><td class="mono">luckyus_apigatewayadmin</td><td>17</td><td class="mono">84 MB</td><td style="color: #5c6b7a;">API网关配置表</td><td class="mono red">2025-05-28</td></tr>
+                    <tr><td><span class="badge badge-blue">dbatest</span></td><td class="mono">luckyus_dbmsdbsearch</td><td>3</td><td class="mono">6 MB</td><td style="color: #5c6b7a;">操作日志和搜索索引</td><td class="mono red">2025-05-28</td></tr>
+                    <tr><td><span class="badge badge-blue">dbatest</span></td><td class="mono">luckyus_ldas_cmdb</td><td>28</td><td class="mono">1 MB</td><td style="color: #5c6b7a;">CMDB配置管理</td><td class="mono red">2025-05-28</td></tr>
+                    <tr><td><span class="badge badge-blue">dbatest</span></td><td class="mono">luckyus_ldas_nacos</td><td>12</td><td class="mono">0.5 MB</td><td style="color: #5c6b7a;">Nacos服务发现配置</td><td class="mono red">2025-05-28</td></tr>
+                    <tr><td><span class="badge badge-blue">dbatest</span></td><td class="mono">luckyus_ozono</td><td>8</td><td class="mono">0.4 MB</td><td style="color: #5c6b7a;">缓存/应用项目元数据</td><td class="mono red">2025-05-28</td></tr>
+                    <tr><td><span class="badge badge-blue">pgilkmap</span></td><td class="mono">luckyus_ilkmap</td><td>—</td><td class="mono orange">115 MB</td><td style="color: #5c6b7a;">位置映射和地理数据</td><td class="mono">未知</td></tr>
+                    <tr><td><span class="badge badge-blue">pgilkmap</span></td><td class="mono">postgres</td><td>—</td><td class="mono">7.7 MB</td><td style="color: #5c6b7a;">系统数据库</td><td class="mono">不适用</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="grid-2">
+            <div class="card">
+                <h3 class="blue">🖥️ recovery-dbatest 数据分析</h3>
+                <div class="data-row"><span class="data-label">Schema总数</span><span class="data-value">6</span></div>
+                <div class="data-row"><span class="data-label">表总数</span><span class="data-value">95</span></div>
+                <div class="data-row"><span class="data-label">数据总量</span><span class="data-value orange">~9.1 GB</span></div>
+                <div class="data-row"><span class="data-label">最大Schema</span><span class="data-value">luckyus_db_collection (8.8GB)</span></div>
+                <div class="data-row" style="border: none;"><span class="data-label">数据新鲜度</span><span class="data-value red">已过期7个月</span></div>
+                <div class="insight-red"><strong>关键发现：</strong>所有数据来自2025年5月28日。这是一个被遗忘的恢复快照。</div>
+            </div>
+            <div class="card">
+                <h3 style="color: #004c99;">🖥️ aws-luckyus-pgilkmap-rw 数据分析</h3>
+                <div class="data-row"><span class="data-label">数据库总数</span><span class="data-value">2</span></div>
+                <div class="data-row"><span class="data-label">主数据库</span><span class="data-value">luckyus_ilkmap</span></div>
+                <div class="data-row"><span class="data-label">数据大小</span><span class="data-value orange">115 MB</span></div>
+                <div class="data-row"><span class="data-label">数据类型</span><span class="data-value">映射/地理数据</span></div>
+                <div class="data-row" style="border: none;"><span class="data-label">表详情</span><span class="data-value" style="color: #5c6b7a;">无法查询*</span></div>
+                <div class="insight-yellow"><strong>说明：</strong>*MCP网关连接到postgres数据库。需要直接连接才能详细分析。</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dependencies Tab -->
+    <div id="tab-dependencies" class="tab-content">
+        <div class="grid-2">
+            <div class="card">
+                <h3 class="blue">🔗 recovery-dbatest</h3>
+                <div class="dep-item"><span class="badge badge-green" style="padding: 2px 8px; font-size: 11px;">safe</span><div class="dep-content"><div class="dep-title">Secrets Manager</div><div class="dep-detail">未发现凭证引用</div></div></div>
+                <div class="dep-item"><span class="badge badge-green" style="padding: 2px 8px; font-size: 11px;">safe</span><div class="dep-content"><div class="dep-title">Parameter Store</div><div class="dep-detail">未发现配置引用</div></div></div>
+                <div class="dep-item"><span class="badge badge-blue" style="padding: 2px 8px; font-size: 11px;">info</span><div class="dep-content"><div class="dep-title">安全组</div><div class="dep-detail">sg_public_prod（60+实例使用）</div></div></div>
+                <div class="dep-item"><span class="badge badge-blue" style="padding: 2px 8px; font-size: 11px;">info</span><div class="dep-content"><div class="dep-title">关联实例</div><div class="dep-detail">aws-luckyus-dbatest-rw（当前生产）</div></div></div>
+                <div class="dep-item"><span class="badge badge-green" style="padding: 2px 8px; font-size: 11px;">safe</span><div class="dep-content"><div class="dep-title">计划任务</div><div class="dep-detail">无存储过程或计划事件</div></div></div>
+                <div class="dep-item" style="margin-bottom: 0;"><span class="badge badge-blue" style="padding: 2px 8px; font-size: 11px;">info</span><div class="dep-content"><div class="dep-title">自动备份</div><div class="dep-detail">7天保留期已启用</div></div></div>
+            </div>
+            <div class="card">
+                <h3 style="color: #004c99;">🔗 aws-luckyus-pgilkmap-rw</h3>
+                <div class="dep-item"><span class="badge badge-orange" style="padding: 2px 8px; font-size: 11px;">warning</span><div class="dep-content"><div class="dep-title">Redis缓存</div><div class="dep-detail">luckyus-lkmap存在但为空</div></div></div>
+                <div class="dep-item"><span class="badge badge-green" style="padding: 2px 8px; font-size: 11px;">safe</span><div class="dep-content"><div class="dep-title">Secrets Manager</div><div class="dep-detail">未发现凭证引用</div></div></div>
+                <div class="dep-item"><span class="badge badge-green" style="padding: 2px 8px; font-size: 11px;">safe</span><div class="dep-content"><div class="dep-title">Parameter Store</div><div class="dep-detail">未发现配置引用</div></div></div>
+                <div class="dep-item"><span class="badge badge-blue" style="padding: 2px 8px; font-size: 11px;">info</span><div class="dep-content"><div class="dep-title">只读副本</div><div class="dep-detail">尽管有-rw后缀但无副本</div></div></div>
+                <div class="dep-item"><span class="badge badge-blue" style="padding: 2px 8px; font-size: 11px;">info</span><div class="dep-content"><div class="dep-title">DevOps Guru</div><div class="dep-detail">已配置监控但未活跃</div></div></div>
+                <div class="dep-item" style="margin-bottom: 0;"><span class="badge badge-orange" style="padding: 2px 8px; font-size: 11px;">warning</span><div class="dep-content"><div class="dep-title">删除保护</div><div class="dep-detail">有意保护</div></div></div>
+            </div>
+        </div>
+        <div class="card">
+            <h3>⚠️ 风险评估总结</h3>
+            <div class="grid-2">
+                <div class="risk-card">
+                    <div class="risk-header"><div class="risk-dot" style="background: #0066cc;"></div><strong>recovery-dbatest</strong><span class="badge badge-green" style="padding: 2px 8px; font-size: 11px; margin-left: 8px;">低</span></div>
+                    <p class="risk-text">所有因素风险均最低。数据已过期，无依赖，通过自动备份具有高恢复能力。创建最终快照后可安全删除。</p>
+                </div>
+                <div class="risk-card">
+                    <div class="risk-header"><div class="risk-dot" style="background: #004c99;"></div><strong>aws-luckyus-pgilkmap-rw</strong><span class="badge badge-orange" style="padding: 2px 8px; font-size: 11px; margin-left: 8px;">中</span></div>
+                    <p class="risk-text">由于活跃数据（115MB）和删除保护，风险中等。但无活跃连接且Redis缓存为空。建议停止（而非删除）。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Actions Tab -->
+    <div id="tab-actions" class="tab-content">
+        <div class="grid-2">
+            <div class="action-card action-card-blue">
+                <div class="action-header">
+                    <div><div class="action-title blue">recovery-dbatest</div><div class="action-subtitle">MySQL 8.0 • db.t3.small</div></div>
+                    <div class="action-badge action-badge-red">🗑️ 快照后删除</div>
+                </div>
+                <div class="rationale">
+                    <div class="rationale-title">操作依据</div>
+                    <ul>
+                        <li>2025年6月的时间点恢复——未清理</li>
+                        <li>数据已过期7个月（最后更新：2025年5月28日）</li>
+                        <li>当前生产实例已存在：aws-luckyus-dbatest-rw</li>
+                        <li>无Secrets Manager或Parameter Store引用</li>
+                        <li>删除保护已禁用</li>
+                    </ul>
+                </div>
+                <div class="checklist-title">停机前检查清单</div>
+                <div class="checklist-item checklist-done"><div class="check-icon check-done">✓</div><div class="checklist-text"><div class="checklist-main">验证无活跃连接</div><div class="checklist-sub">已确认：0个连接</div></div></div>
+                <div class="checklist-item checklist-done"><div class="check-icon check-done">✓</div><div class="checklist-text"><div class="checklist-main">验证删除保护已禁用</div><div class="checklist-sub">已确认：已禁用</div></div></div>
+                <div class="checklist-item checklist-pending"><div class="check-icon check-pending">○</div><div class="checklist-text"><div class="checklist-main">创建最终手动快照</div><div class="checklist-sub">用于存档</div></div></div>
+                <div class="checklist-item checklist-pending"><div class="check-icon check-pending">○</div><div class="checklist-text"><div class="checklist-main">通知DBA团队</div><div class="checklist-sub">获得团队负责人批准</div></div></div>
+                <div class="checklist-item checklist-pending"><div class="check-icon check-pending">○</div><div class="checklist-text"><div class="checklist-main">删除实例</div><div class="checklist-sub">批准后执行</div></div></div>
+                <div class="savings-box"><span class="savings-label">月度节省</span><span class="savings-value">$48.96</span></div>
+            </div>
+            <div class="action-card action-card-yellow">
+                <div class="action-header">
+                    <div><div class="action-title" style="color: #004c99;">aws-luckyus-pgilkmap-rw</div><div class="action-subtitle">PostgreSQL 17 • db.m5.large</div></div>
+                    <div class="action-badge action-badge-yellow">⏸️ 停止实例</div>
+                </div>
+                <div class="rationale">
+                    <div class="rationale-title">操作依据</div>
+                    <ul>
+                        <li>超过40天无连接（最后：11月17日）</li>
+                        <li>相关Redis缓存存在但为空</li>
+                        <li>删除保护已启用——有意保留</li>
+                        <li>包含115MB活跃映射数据</li>
+                        <li>停止可保留数据同时节省成本</li>
+                    </ul>
+                </div>
+                <div class="checklist-title">停机前检查清单</div>
+                <div class="checklist-item checklist-done"><div class="check-icon check-done">✓</div><div class="checklist-text"><div class="checklist-main">验证无活跃连接</div><div class="checklist-sub">已确认：0个连接</div></div></div>
+                <div class="checklist-item checklist-pending"><div class="check-icon check-pending">○</div><div class="checklist-text"><div class="checklist-main">确定ilkmap服务负责人</div><div class="checklist-sub">查看DevOps Guru仪表板</div></div></div>
+                <div class="checklist-item checklist-pending"><div class="check-icon check-pending">○</div><div class="checklist-text"><div class="checklist-main">确认无即将上线的功能</div><div class="checklist-sub">需要团队确认</div></div></div>
+                <div class="checklist-item checklist-pending"><div class="check-icon check-pending">○</div><div class="checklist-text"><div class="checklist-main">停止实例</div><div class="checklist-sub">请勿删除</div></div></div>
+                <div class="checklist-item checklist-pending"><div class="check-icon check-pending">○</div><div class="checklist-text"><div class="checklist-main">监控30天</div><div class="checklist-sub">关注是否有投诉</div></div></div>
+                <div class="checklist-item checklist-pending"><div class="check-icon check-pending">○</div><div class="checklist-text"><div class="checklist-main">重新评估是否删除</div><div class="checklist-sub">监控期后</div></div></div>
+                <div class="savings-box"><div><span class="savings-label">月度节省</span><div class="savings-note">存储费用继续（约$2.30/月）</div></div><span class="savings-value">$254.02</span></div>
+            </div>
+        </div>
+        <div class="card">
+            <h3>👥 相关方与审批</h3>
+            <div class="grid-3">
+                <div class="stakeholder"><div class="stakeholder-name">DBA团队</div><div class="stakeholder-role">recovery-dbatest负责人</div><div class="stakeholder-footer"><span class="stakeholder-action">批准删除</span><span class="stakeholder-badge stakeholder-required">必需</span></div></div>
+                <div class="stakeholder"><div class="stakeholder-name">ilkmap服务团队</div><div class="stakeholder-role">pgilkmap-rw负责人</div><div class="stakeholder-footer"><span class="stakeholder-action">批准停止</span><span class="stakeholder-badge stakeholder-required">必需</span></div></div>
+                <div class="stakeholder"><div class="stakeholder-name">DevOps/平台团队</div><div class="stakeholder-role">执行停机</div><div class="stakeholder-footer"><span class="stakeholder-action">协调操作</span><span class="stakeholder-badge stakeholder-execute">执行</span></div></div>
+            </div>
+        </div>
+        <div class="final-banner">
+            <div><div class="final-title">💡 成本优化总计</div><div class="final-subtitle">操作后：$2.30/月（仅pgilkmap存储费）对比当前 $305.28/月</div></div>
+            <div><div class="final-label">年度节省</div><div class="final-value">$3,636</div></div>
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tabId).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        function selectInstance(instance) {
+            document.getElementById('instance-dbatest').style.display = instance === 'dbatest' ? 'block' : 'none';
+            document.getElementById('instance-pgilkmap').style.display = instance === 'pgilkmap' ? 'block' : 'none';
+            document.getElementById('btn-dbatest').classList.toggle('active', instance === 'dbatest');
+            document.getElementById('btn-pgilkmap').classList.toggle('active', instance === 'pgilkmap');
+        }
+    </script>
+</body>
+</html>

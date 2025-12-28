@@ -1,0 +1,20 @@
+{
+  "name": "rds-idle-analysis-dashboard",
+  "version": "1.0.0",
+  "description": "RDS闲置实例分析报告仪表板 - recovery-dbatest 和 aws-luckyus-pgilkmap-rw",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve .",
+    "dev": "npx serve ."
+  },
+  "keywords": [
+    "rds",
+    "aws",
+    "dashboard",
+    "cost-optimization",
+    "luckin-coffee"
+  ],
+  "author": "Luckin Coffee US DevOps",
+  "license": "MIT",
+  "private": true
+}
